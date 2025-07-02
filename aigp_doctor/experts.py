@@ -1,5 +1,7 @@
 
-from transformers import pipeline, AutoTokenizer, AutoModelForQuestionAnswering
+from transformers import pipeline, AutoTokenizer, AutoModelForQuestionAnswering, AutoProcessor, AutoModelForCausalLM
+import torch
+from PIL import Image
 
 class AIHealthcareExperts:
     def __init__(self):
@@ -77,25 +79,123 @@ class AIHealthcareExperts:
 
     def llava_med_analysis(self, image_data):
         """LLaVA-Med for medical image analysis with natural language"""
-        # Placeholder for LLaVA-Med - would use actual model
+        # For llava_med_analysis, we'll ask a general question about the image.
+        question = "What do you see in this medical image?"
+        
+        # Use the same model as biomedclip_classification
+        return self.biomedclip_classification(image_data, question)
+
+    def biomedclip_classification(self, image_data, question="What is the primary diagnosis?"):
+        """BioMedCLIP for medical image classification and VQA"""
+        try:
+            if not image_data:
+                return {
+                    'expert': 'Idefic_medical_VQA',
+                    'findings': 'No image data provided.',
+                    'confidence': 0.0
+                }
+
+            # Load the model and processor
+            processor = AutoProcessor.from_pretrained("Shashwath01/Idefic_medical_VQA_merged_4bit")
+            model = AutoModelForCausalLM.from_pretrained("Shashwath01/Idefic_medical_VQA_merged_4bit", torch_dtype=torch.bfloat16, device_map="auto")
+
+            # Prepare the prompt
+            prompt = [
+                "User:",
+                f'''You are a medical expert. Please answer the following question about the image: {question}''',
+                Image.open(image_data),
+                "<end_of_utterance>",
+                '''
+Assistant:'''
+            ]
+            
+            # Process the inputs
+            inputs = processor(prompt, return_tensors="pt").to("cuda")
+            
+            # Generate the output
+            generated_ids = model.generate(**inputs, max_length=128)
+            answer = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+
+            analysis = {
+                'expert': 'Idefic_medical_VQA',
+                'findings': answer,
+                'confidence': 0.85,  # Placeholder confidence
+            }
+            print(f"Idefic_medical_VQA analysis completed with confidence: {analysis['confidence']}")
+            return analysis
+
+        except Exception as e:
+            print(f"Error during Idefic_medical_VQA analysis: {e}")
+            return {
+                'expert': 'Idefic_medical_VQA',
+                'findings': f'Error during analysis: {str(e)}',
+                'confidence': 0.0
+            }
+
+    def advanced_medical_llm_analysis(self, text_data):
+        """
+        Placeholder for a more advanced medical LLM for comprehensive text analysis.
+        Potential models: Clinical Camel (open-source), or commercial APIs like Med-PaLM 2.
+        """
         analysis = {
-            'expert': 'LLaVA_Med',
-            'findings': 'Medical image analysis: Examining uploaded medical image.',
-            'confidence': 0.78,
-            'detected_abnormalities': ['Image analysis placeholder - would detect abnormalities here']
+            'expert': 'Advanced_Medical_LLM',
+            'findings': f"Comprehensive medical text analysis by advanced LLM: {text_data}",
+            'confidence': 0.90,
+            'suggested_diagnoses': ['Diagnosis X', 'Diagnosis Y'],
+            'treatment_recommendations': ['Treatment A', 'Treatment B']
         }
-        print(f"LLaVA-Med analysis completed with confidence: {analysis['confidence']}")
+        print(f"Advanced Medical LLM analysis completed with confidence: {analysis['confidence']}")
         return analysis
 
-    def biomedclip_classification(self, image_data):
-        """BioMedCLIP for medical image classification"""
-        # Placeholder for BioMedCLIP - would use actual model
-        classification = {
-            'expert': 'BioMedCLIP',
-            'primary_diagnosis': 'Medical condition classification pending',
-            'confidence': 0.82,
-            'differential_diagnoses': ['Condition A', 'Condition B', 'Normal'],
-            'probabilities': [0.45, 0.35, 0.20]
-        }
-        print(f"BioMedCLIP classification completed with confidence: {classification['confidence']}")
-        return classification
+    def chest_xray_analysis(self, image_data):
+        """
+        Placeholder for a specialized chest X-ray analysis model.
+        This would typically involve a fine-tuned CNN or Vision Transformer.
+        """
+        try:
+            if not image_data:
+                return {
+                    'expert': 'Chest_XRay_Expert',
+                    'findings': 'No image data provided.',
+                    'confidence': 0.0
+                }
+
+            # Load pretrained X-ray model
+            model = xrv.models.DenseNet(weights="densenet121-res224-all")
+
+            # Define preprocessing function
+            transform = transforms.Compose([
+                transforms.Resize((224, 224)),
+                transforms.ToTensor()
+            ])
+
+            # Open and preprocess the image
+            image = Image.open(image_data)
+            if image.mode != "L":
+                image = image.convert("L")
+            img_tensor = transform(image).unsqueeze(0)
+
+            # Predict
+            with torch.no_grad():
+                outputs = model(img_tensor)
+
+            # Get top 5 predictions
+            top5_idx = torch.topk(outputs[0], 5).indices
+            results = {model.pathologies[i]: round(outputs[0][i].item(), 4) for i in top5_idx}
+
+            analysis = {
+                'expert': 'Chest_XRay_Expert',
+                'findings': 'Automated analysis of chest X-ray image.',
+                'confidence': 0.88, # Placeholder confidence
+                'detected_conditions': results
+            }
+            print(f"Chest X-Ray analysis completed with confidence: {analysis['confidence']}")
+            return analysis
+
+        except Exception as e:
+            print(f"Error during Chest X-Ray analysis: {e}")
+            return {
+                'expert': 'Chest_XRay_Expert',
+                'findings': f'Error during analysis: {str(e)}',
+                'confidence': 0.0
+            }

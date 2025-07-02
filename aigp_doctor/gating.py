@@ -20,22 +20,37 @@ class GatingMechanism:
         if text_data:
             routing_plan['data_for_experts']['text'] = processed_data['text_data']
             
-            # Activate Clinical LLM and ClinicalBERT if text input is substantial
-            if len(text_data.split()) > 5: # Simple check for substantial text
-                routing_plan['activate_clinical_llm'] = True
+            # Prioritize advanced LLM for comprehensive text analysis if text is substantial
+            if len(text_data.split()) > 10: # More substantial text for advanced analysis
+                routing_plan['activate_advanced_medical_llm'] = True
+                print(f"Routing substantial text to Advanced Medical LLM: {processed_data['text_data']}")
+            
+            # Fallback to ClinicalBERT for QA if advanced LLM not activated or for specific QA needs
+            if not routing_plan.get('activate_advanced_medical_llm') or "question" in text_data.lower():
                 routing_plan['activate_clinical_bert'] = True
-                print(f"Routing substantial text to Clinical LLM and ClinicalBERT: {processed_data['text_data']}")
-            elif has_audio: # If only audio, still route to text models
-                routing_plan['activate_clinical_llm'] = True
-                routing_plan['activate_clinical_bert'] = True
-                print(f"Routing transcribed audio to Clinical LLM and ClinicalBERT: {processed_data['text_data']}")
+                print(f"Routing text to ClinicalBERT for QA: {processed_data['text_data']}")
+
+            # Always activate Clinical LLM for general analysis if text is present
+            routing_plan['activate_clinical_llm'] = True
+            print(f"Routing text to Clinical LLM for general analysis: {processed_data['text_data']}")
 
         # Route image data to vision experts
         if has_image:
             routing_plan['data_for_experts']['image'] = processed_data['image_data']
-            # Always activate vision models if an image is present
-            routing_plan['activate_llava_med'] = True
-            routing_plan['activate_biomedclip'] = True
-            print("Routing image to LLaVA-Med and BioMedCLIP")
+            image_type = processed_data.get('image_type', '').lower() # Assuming image_type can be passed in processed_data
+            text_data = processed_data.get('text_data', '').lower()
+
+            # Route to specialized chest X-ray expert if image type is specified or text contains keywords
+            if "x-ray" in image_type or "xray" in image_type or "chest" in image_type or \
+               "x-ray" in text_data or "xray" in text_data or "chest" in text_data:
+                routing_plan['activate_chest_xray_expert'] = True
+                print("Routing image to Chest X-Ray Expert")
+            else:
+                # Fallback to general vision models if no specific image type or for other image types
+                routing_plan['activate_llava_med'] = True
+                routing_plan['activate_biomedclip'] = True
+                print("Routing image to LLaVA-Med and BioMedCLIP")
+
+        return routing_plan
 
         return routing_plan

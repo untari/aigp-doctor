@@ -42,6 +42,14 @@ class DiagnosticIntegrator:
                 # Add a simple XAI insight for image models
                 xai_insights.append(f"{expert_name} identified potential conditions with confidence {confidence:.2f}.")
 
+            # Extract conditions from chest X-ray analysis
+            elif expert_name == 'Chest_XRay_Expert':
+                detected_conditions = output.get('detected_conditions', {})
+                for condition, score in detected_conditions.items():
+                    if score > 0.5: # Only include conditions with a confidence score greater than 0.5
+                        possible_conditions.append(f"{condition} (confidence: {score})")
+                xai_insights.append(f"Chest X-Ray Expert identified potential conditions with confidence {confidence:.2f}.")
+
         # Remove duplicates and clean up symptoms
         symptoms = list(set([s for s in symptoms if s and s != 'General discomfort mentioned']))
 
