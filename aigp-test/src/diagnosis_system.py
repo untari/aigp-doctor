@@ -10,6 +10,7 @@ from src.models.image_expert import ImageAnalysisExpert
 from src.models.general_expert import GeneralAIExpert
 from src.models.secondary_analyzer import SecondaryAIAnalyzer
 from src.models.feedback_generator import ActionableFeedbackGenerator
+from src.models.medication_expert import MedicationRecommendationExpert
 
 class DiagnosisSystem:
     """Complete diagnosis system using only free, open-source models"""
@@ -23,11 +24,16 @@ class DiagnosisSystem:
         self.general_expert = GeneralAIExpert()
         self.secondary_ai = SecondaryAIAnalyzer()  # A.I.(2)
         self.feedback_generator = ActionableFeedbackGenerator()
+        self.medication_expert = MedicationRecommendationExpert()  # New AI expert
         print("✅ System ready!")
 
     def comprehensive_diagnosis(self, symptoms: str, context: str = "") -> Dict:
         """A.I.(1) - Primary diagnosis using ensemble of medical models"""
         self.log_step("🔍 A.I.(1) Starting comprehensive analysis", f"Symptoms: {symptoms}, Context: {context}")
+        
+        # Check for emergency symptoms first
+        emergency_alert = self.feedback_generator.generate_emergency_recommendations(symptoms)
+        
         biobert_result = self.biobert.diagnose(symptoms, context)
         severity_result = self.clinical_bert.analyze_severity(symptoms)
         similarity_result = self.sentence_transformer.find_similar_cases(symptoms)
@@ -42,7 +48,7 @@ class DiagnosisSystem:
         if severity_result['severity'] == 'severe': final_confidence = min(final_confidence + 0.1, 0.95)
         elif severity_result['severity'] == 'mild': final_confidence = max(final_confidence - 0.1, 0.3)
         
-        return {
+        result = {
             "diagnosis": biobert_result['diagnosis'],
             "confidence": final_confidence,
             "severity": severity_result['severity'],
@@ -50,6 +56,13 @@ class DiagnosisSystem:
             "reasoning": f"A.I.(1) Multi-model analysis: BioBERT ({biobert_result['confidence']:.2f}), ClinicalBERT ({severity_result['confidence']:.2f}), SentenceTransformer ({similarity_result['confidence']:.2f}), Context bonus: {context_bonus:.2f}",
             "ai_stage": "primary"
         }
+        
+        # Add emergency alert if detected
+        if emergency_alert:
+            result["emergency_alert"] = emergency_alert
+            result["severity"] = "emergency"
+        
+        return result
 
     def enhanced_diagnosis_with_context(self, symptoms: str, all_context: str, previous_diagnosis: Dict) -> Dict:
         """Re-run A.I.(1) with enhanced context after A.I.(2) gathers more info"""
@@ -99,6 +112,22 @@ class DiagnosisSystem:
                 return f"Image analysis: {image_description}"
         
         return f"Image analysis: {image_description}"
+
+    def get_enhanced_medication_recommendations(self, diagnosis: str, symptoms: str, severity: str, current_medications: list = None) -> Dict:
+        """Get AI-powered medication recommendations with safety checks"""
+        self.log_step("💊 Getting enhanced medication recommendations", f"Diagnosis: {diagnosis}")
+        
+        # Get personalized recommendations from AI expert
+        recommendations = self.medication_expert.generate_personalized_recommendations(
+            diagnosis, symptoms, severity
+        )
+        
+        # Add drug interaction warnings if current medications provided
+        if current_medications:
+            interaction_warning = self.medication_expert.get_drug_interactions_warning(current_medications)
+            recommendations["drug_interactions"] = interaction_warning
+        
+        return recommendations
 
     def log_step(self, step: str, details: str = ""):
         timestamp = datetime.now().strftime("%H:%M:%S")

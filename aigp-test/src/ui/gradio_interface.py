@@ -216,6 +216,12 @@ def create_chatbot_interface():
                     elem_classes="action-button",
                     size="sm"
                 )
+                medication_btn = gr.Button(
+                    "💊 Get medication recommendations", 
+                    visible=False,
+                    elem_classes="action-button",
+                    size="sm"
+                )
 
         def unified_handler(message, image_upload, history, state):
             history = history or []
@@ -225,6 +231,7 @@ def create_chatbot_interface():
             ask_q_update = gr.update(visible=False)
             provide_info_update = gr.update(visible=False)
             explain_update = gr.update(visible=False)
+            medication_update = gr.update(visible=False)
 
             # 1. Handle Image Upload with enhanced context integration
             if image_upload is not None:
@@ -236,7 +243,7 @@ def create_chatbot_interface():
                 bot_message = f"I've analyzed the image in context. {description}. What are the primary symptoms?"
                 state["stage"] = "AWAITING_SYMPTOMS"
                 history.append((None, bot_message))
-                return history, state, ask_q_update, provide_info_update, explain_update
+                return history, state, ask_q_update, provide_info_update, explain_update, medication_update
 
             # Add user message to history
             if message:
@@ -330,8 +337,9 @@ def create_chatbot_interface():
                 provide_info_update = gr.update(visible=True)
             if state["stage"] == "DIAGNOSIS_COMPLETE":
                 explain_update = gr.update(visible=True)
+                medication_update = gr.update(visible=True)
 
-            return history, state, ask_q_update, provide_info_update, explain_update
+            return history, state, ask_q_update, provide_info_update, explain_update, medication_update
 
         def on_ask_questions_click(state, history):
             history = history or []
@@ -374,13 +382,35 @@ def create_chatbot_interface():
             history.append((None, explanation))
             return history, state
 
+        def on_medication_click(state, history):
+            history = history or []
+            if not state.get("last_diagnosis"):
+                bot_message = "No diagnosis has been made yet."
+                history.append((None, bot_message))
+                return history, state
+                
+            diagnosis = state["last_diagnosis"]["diagnosis"]
+            symptoms = state.get("symptoms", "")
+            severity = state["last_diagnosis"].get("severity", "mild")
+            
+            # Get enhanced medication recommendations
+            med_recommendations = free_diagnosis_system.get_enhanced_medication_recommendations(
+                diagnosis, symptoms, severity
+            )
+            
+            # Format the medication recommendations
+            bot_message = format_medication_recommendations(med_recommendations, diagnosis)
+            history.append((None, bot_message))
+            return history, state
+
         # Link handlers to events
-        txt_input.submit(lambda msg, hist, st: unified_handler(msg, None, hist, st), [txt_input, chatbot, case_state], [chatbot, case_state, ask_questions_btn, provide_info_btn, explain_btn], queue=False).then(lambda: "", None, txt_input)
-        upload_btn.upload(lambda img, hist, st: unified_handler(None, img, hist, st), [upload_btn, chatbot, case_state], [chatbot, case_state, ask_questions_btn, provide_info_btn, explain_btn], queue=False)
+        txt_input.submit(lambda msg, hist, st: unified_handler(msg, None, hist, st), [txt_input, chatbot, case_state], [chatbot, case_state, ask_questions_btn, provide_info_btn, explain_btn, medication_btn], queue=False).then(lambda: "", None, txt_input)
+        upload_btn.upload(lambda img, hist, st: unified_handler(None, img, hist, st), [upload_btn, chatbot, case_state], [chatbot, case_state, ask_questions_btn, provide_info_btn, explain_btn, medication_btn], queue=False)
 
         ask_questions_btn.click(on_ask_questions_click, [case_state, chatbot], [chatbot, case_state, ask_questions_btn, provide_info_btn])
         provide_info_btn.click(on_provide_info_click, [case_state, chatbot], [chatbot, case_state, ask_questions_btn, provide_info_btn])
         explain_btn.click(on_explain_click, [case_state, chatbot], [chatbot, case_state])
+        medication_btn.click(on_medication_click, [case_state, chatbot], [chatbot, case_state])
 
         # Professional examples section
         with gr.Column(elem_classes="examples-section"):
@@ -423,6 +453,14 @@ Try these sample inputs to get started:</p>
 def format_diagnosis_output(result: Dict, is_final: bool) -> str:
     """Format diagnosis output with professional medical styling"""
     confidence = result['confidence']
+    
+    # Check for emergency first
+    if result.get('emergency_alert'):
+        return f"""
+<div style="border: 3px solid #dc3545; background: #f8d7da; padding: 1.5rem; border-radius: 12px; margin: 1rem 0; box-shadow: 0 4px 12px rgba(220,53,69,0.3);">
+{result['emergency_alert']}
+</div>
+"""
     
     # Determine confidence styling and icon
     if confidence > 0.8:
@@ -488,3 +526,54 @@ def format_diagnosis_output(result: Dict, is_final: bool) -> str:
 </div>
 """
     return output.strip()
+
+def format_medication_recommendations(recommendations: Dict, diagnosis: str) -> str:
+    """Format medication recommendations from the AI expert"""
+    output = f"💊 **ENHANCED MEDICATION RECOMMENDATIONS FOR {diagnosis.upper()}**\n\n"
+    
+    # AI Recommendations section
+    if recommendations.get("ai_recommendations"):
+        output += "🤖 **AI-Powered Recommendations:**\n"
+        output += f"```\n{recommendations['ai_recommendations']}\n```\n\n"
+    
+    # Database recommendations
+    if recommendations.get("database_match"):
+        output += "📋 **Evidence-Based Recommendations:**\n"
+        for rec in recommendations["database_match"]:
+            output += f"• {rec}\n"
+        output += "\n"
+    
+    # Safety assessment
+    if recommendations.get("safety_check"):
+        safety = recommendations["safety_check"]
+        urgency_color = {"emergency": "🚨", "urgent": "⚠️", "routine": "✅"}
+        urgency_icon = urgency_color.get(safety.get("urgency_level", "routine"), "✅")
+        
+        output += f"{urgency_icon} **Safety Assessment:** {safety.get('urgency_level', 'routine').title()}\n"
+        
+        if safety.get("warnings"):
+            for warning in safety["warnings"]:
+                output += f"• {warning}\n"
+        
+        if safety.get("general_advice"):
+            output += f"• {safety['general_advice']}\n"
+        output += "\n"
+    
+    # Drug interactions
+    if recommendations.get("drug_interactions"):
+        output += f"{recommendations['drug_interactions']}\n\n"
+    
+    # Source information
+    source = recommendations.get("source", "AI + Database")
+    output += f"📊 **Source:** {source}\n\n"
+    
+    # Comprehensive disclaimer
+    output += """🚨 **CRITICAL MEDICAL DISCLAIMER:**
+• These recommendations are for educational purposes only
+• AI-generated advice cannot replace professional medical consultation
+• Always verify dosages and contraindications with healthcare providers
+• Seek immediate medical attention if symptoms worsen
+• Contact your doctor before starting any new medication
+• This system is not a substitute for professional medical care"""
+    
+    return output
