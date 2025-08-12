@@ -17,41 +17,41 @@ def create_chatbot_interface():
     }
     
     .main-container {
-        max-width: 800px;
-        margin: 0 auto;
+        max-width: 100%;
+        margin: 0;
         background: transparent;
     }
     
     .header-section {
         text-align: center;
-        padding: 1rem 1rem;
+        padding: 0.5rem 1rem;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         backdrop-filter: blur(10px);
-        margin-bottom: 1rem;
-        border-radius: 15px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        margin-bottom: 0.5rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     
     .header-title {
         color: white;
-        font-size: 1.8rem;
+        font-size: 1.4rem;
         font-weight: 600;
-        margin-bottom: 0.3rem;
+        margin-bottom: 0.2rem;
         text-shadow: 0 2px 4px rgba(0,0,0,0.3);
     }
     
     .header-subtitle {
         color: rgba(255, 255, 255, 0.9);
-        font-size: 0.95rem;
+        font-size: 0.85rem;
         font-weight: 300;
-        margin-bottom: 0.3rem;
+        margin-bottom: 0.2rem;
     }
     
     .chat-container {
         background: white;
         border-radius: 20px;
         box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-        margin: 1rem;
+        margin: 0.5rem;
         overflow: hidden;
     }
     
@@ -173,7 +173,7 @@ def create_chatbot_interface():
                 label="",
                 show_label=False,
                 bubble_full_width=False, 
-                height=450,
+                height=600,
                 elem_classes="chat-messages",
                 avatar_images=(None, None),
                 show_copy_button=True
