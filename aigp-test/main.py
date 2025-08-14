@@ -21,4 +21,4 @@ if __name__ == "__main__":
     
     # Create and launch the interface
     chatbot_demo = create_chatbot_interface()
-    chatbot_demo.launch(share=True, debug=True)
+    chatbot_demo.launch(share=False, debug=False)

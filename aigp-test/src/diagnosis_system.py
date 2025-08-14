@@ -108,7 +108,11 @@ class DiagnosisSystem:
                 result = self.secondary_ai.analyzer(prompt, max_new_tokens=100, temperature=0.3)
                 contextualized_analysis = result[0]["generated_text"]
                 return f"Image analysis: {image_description}. Medical relevance: {contextualized_analysis}"
-            except:
+            except (KeyError, IndexError, AttributeError) as e:
+                print(f"Error accessing AI analysis result: {e}")
+                return f"Image analysis: {image_description}"
+            except Exception as e:
+                print(f"Unexpected error during image contextualization: {e}")
                 return f"Image analysis: {image_description}"
         
         return f"Image analysis: {image_description}"
