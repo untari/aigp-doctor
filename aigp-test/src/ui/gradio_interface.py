@@ -1,16 +1,54 @@
 
 
+"""
+Gradio Web Interface for AI GP Doctor
+=====================================
+
+This module creates the web-based user interface for the AI GP Doctor system
+using Gradio. It provides a chat-style interface for medical consultation
+with support for text input, image uploads, and interactive buttons.
+
+Key Features:
+- Professional medical-themed UI design
+- Chat-style conversation flow
+- Image upload and analysis capabilities
+- Dynamic button interactions
+- State management for multi-turn conversations
+- Comprehensive medical disclaimers
+
+Security Considerations:
+- File upload handling needs validation
+- Input sanitization for user messages
+- No authentication mechanism (for demo purposes)
+"""
+
 import gradio as gr
 from PIL import Image
 from typing import Dict
 
+# Import the core diagnosis system
 from src.diagnosis_system import DiagnosisSystem
 
+# Initialize the global diagnosis system instance
+# This is shared across all user sessions
 free_diagnosis_system = DiagnosisSystem()
 
 def create_chatbot_interface():
-    """Creates and returns the professional Gradio Chatbot interface."""
-    # Custom CSS for modern chat interface
+    """
+    Creates and returns the professional Gradio Chatbot interface
+    
+    This function constructs the complete web interface including:
+    - CSS styling for medical theme
+    - Chat interface components
+    - Input controls and buttons
+    - State management system
+    - Event handlers for interactions
+    
+    Returns:
+        gr.Blocks: Complete Gradio interface ready for launch
+    """
+    # Custom CSS for modern medical chat interface
+    # Defines the visual styling and responsive design
     custom_css = """
     body {
         background: #f5f7fa !important;
@@ -179,18 +217,18 @@ def create_chatbot_interface():
                 show_copy_button=True
             )
 
-            # Input section
+            # Input section with voice support
             with gr.Row(elem_classes="input-row"):
-                with gr.Column(scale=4):
+                with gr.Column(scale=3):
                     txt_input = gr.Textbox(
                         show_label=False, 
                         placeholder="💬 Describe your symptoms, ask questions, or provide additional information...",
                         container=False,
                         elem_classes="message-input"
                     )
-                with gr.Column(scale=1, min_width=120):
+                with gr.Column(scale=1, min_width=100):
                     upload_btn = gr.UploadButton(
-                        "📁 Upload Image", 
+                        "📁 Image", 
                         file_types=["image"],
                         elem_classes="upload-button",
                         size="sm"
@@ -224,19 +262,35 @@ def create_chatbot_interface():
                 )
 
         def unified_handler(message, image_upload, history, state):
+            """
+            Unified event handler for user interactions
+            
+            This function processes text messages and image uploads,
+            managing the conversation flow and state transitions.
+            
+            Args:
+                message (str): User text input
+                image_upload: Uploaded image file
+                history (list): Chat conversation history
+                state (dict): Current conversation state
+                
+            Returns:
+                tuple: Updated history, state, and button visibility updates
+            """
             history = history or []
             bot_message = ""
 
-            # This will hold the updates for the buttons
+            # Initialize button visibility updates
+            # These control which action buttons are shown to the user
             ask_q_update = gr.update(visible=False)
             provide_info_update = gr.update(visible=False)
             explain_update = gr.update(visible=False)
             medication_update = gr.update(visible=False)
 
-            # 1. Handle Image Upload with enhanced context integration
+            # Handle Image Upload with enhanced context integration
             if image_upload is not None:
                 history.append((None, (image_upload.name,)))
-                pil_image = Image.open(image_upload.name)
+                pil_image = Image.open(image_upload.name)  # SECURITY RISK: No validation
                 current_context = " ".join(state.get("context_history", []))
                 description = free_diagnosis_system.analyze_image_in_context(pil_image, current_context)
                 state["context_history"].append(description)
@@ -245,15 +299,18 @@ def create_chatbot_interface():
                 history.append((None, bot_message))
                 return history, state, ask_q_update, provide_info_update, explain_update, medication_update
 
-            # Add user message to history
+
+            # Add user message to conversation history
             if message:
                 history.append((message, None))
 
-            # 2. Enhanced State Machine Logic with A.I.(1) and A.I.(2) routing
+            # Enhanced State Machine Logic with A.I.(1) and A.I.(2) routing
+            # This implements the conversation flow state machine
             stage = state["stage"]
 
             if stage == "AWAITING_SYMPTOMS":
-                # Check if this is a general medical question rather than symptoms
+                # Differentiate between medical questions and symptom descriptions
+                # This allows the system to handle both educational queries and diagnosis
                 question_indicators = [
                     "what is", "what are", "how does", "why does", "explain", "difference between",
                     "tell me about", "can you explain", "what's the", "how to", "when should"
@@ -262,12 +319,12 @@ def create_chatbot_interface():
                 is_question = any(indicator in message.lower() for indicator in question_indicators)
                 
                 if is_question:
-                    # Handle as a general medical question
+                    # Handle as a general medical question using the general AI expert
                     bot_message = free_diagnosis_system.general_expert.answer(message)
                     bot_message += "\n\n---\n\n💡 **Need a diagnosis?** Describe your symptoms and I'll help analyze them."
                     # Stay in AWAITING_SYMPTOMS state for potential follow-up
                 else:
-                    # Handle as symptoms - proceed with diagnosis
+                    # Handle as symptoms - proceed with formal diagnosis workflow
                     state["symptoms"] = message
                     state["context_history"].append(f"Symptoms: {message}")
                     bot_message = "Thank you. Any pre-existing conditions, allergies, or relevant patient history? (e.g., 'diabetic, allergic to penicillin') If not, just say 'none')."
@@ -338,29 +395,44 @@ def create_chatbot_interface():
             if state["stage"] == "DIAGNOSIS_COMPLETE":
                 explain_update = gr.update(visible=True)
                 medication_update = gr.update(visible=True)
-
+            
             return history, state, ask_q_update, provide_info_update, explain_update, medication_update
 
         def on_ask_questions_click(state, history):
+            """
+            Handler for "Ask me clarifying questions" button
+            
+            This function generates and presents follow-up questions to gather
+            additional information when the initial diagnosis confidence is low.
+            
+            Args:
+                state (dict): Current conversation state
+                history (list): Chat conversation history
+                
+            Returns:
+                tuple: Updated history, state, and button visibility
+            """
             history = history or []
-            # Defensive check
+            
+            # Defensive check to ensure diagnosis exists before asking questions
             if not state.get("last_diagnosis"):
                 bot_message = "I can't ask questions yet. Please describe the symptoms first."
                 history.append((None, bot_message))
-                return history, state, gr.update(visible=False), gr.update(visible=False)
+                return history, state, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
 
-            # Use A.I.(2) generated questions if available, otherwise fallback
+            # Use A.I.(2) generated questions if available, otherwise fallback to general questions
             if state.get("secondary_analysis") and state["secondary_analysis"].get("follow_up_questions"):
                 questions = state["secondary_analysis"]["follow_up_questions"]
                 bot_message = f"🤖 **A.I.(2) asks:** Please answer these specific questions:\n• {questions[0]}\n• {questions[1] if len(questions) > 1 else 'Any additional symptoms or changes?'}"
             else:
+                # Fallback to general question generation
                 diagnosis = state["last_diagnosis"]["diagnosis"]
                 questions = free_diagnosis_system.question_generator.generate_questions(diagnosis)
                 bot_message = f"Of course. Please answer the following:\n• {questions[0]}\n• {questions[1]}"
             
             history.append((None, bot_message))
             state["stage"] = "AWAITING_INFO"
-            # Hide buttons after click
+            # Hide buttons after click to prevent multiple activations
             return history, state, gr.update(visible=False), gr.update(visible=False)
 
         def on_provide_info_click(state, history):
@@ -376,7 +448,7 @@ def create_chatbot_interface():
             if not state.get("last_diagnosis"):
                 bot_message = "No diagnosis has been made yet."
                 history.append((None, bot_message))
-                return history, state
+                return history, state, gr.update(visible=False)
             diagnosis = state["last_diagnosis"]["diagnosis"]
             explanation = free_diagnosis_system.general_expert.answer(f"Please provide a detailed explanation of {diagnosis}.")
             history.append((None, explanation))
@@ -403,9 +475,11 @@ def create_chatbot_interface():
             history.append((None, bot_message))
             return history, state
 
+
         # Link handlers to events
         txt_input.submit(lambda msg, hist, st: unified_handler(msg, None, hist, st), [txt_input, chatbot, case_state], [chatbot, case_state, ask_questions_btn, provide_info_btn, explain_btn, medication_btn], queue=False).then(lambda: "", None, txt_input)
         upload_btn.upload(lambda img, hist, st: unified_handler(None, img, hist, st), [upload_btn, chatbot, case_state], [chatbot, case_state, ask_questions_btn, provide_info_btn, explain_btn, medication_btn], queue=False)
+        
 
         ask_questions_btn.click(on_ask_questions_click, [case_state, chatbot], [chatbot, case_state, ask_questions_btn, provide_info_btn])
         provide_info_btn.click(on_provide_info_click, [case_state, chatbot], [chatbot, case_state, ask_questions_btn, provide_info_btn])
@@ -451,7 +525,19 @@ Try these sample inputs to get started:</p>
     return demo
 
 def format_diagnosis_output(result: Dict, is_final: bool) -> str:
-    """Format diagnosis output with professional medical styling"""
+    """
+    Format diagnosis output with professional medical styling
+    
+    This function creates a visually appealing and informative display
+    of diagnosis results with appropriate medical styling and color coding.
+    
+    Args:
+        result (Dict): Diagnosis result from the AI system
+        is_final (bool): Whether this is a final or preliminary diagnosis
+        
+    Returns:
+        str: HTML-formatted diagnosis display with styling
+    """
     confidence = result['confidence']
     
     # Check for emergency first
@@ -527,8 +613,22 @@ def format_diagnosis_output(result: Dict, is_final: bool) -> str:
 """
     return output.strip()
 
+
 def format_medication_recommendations(recommendations: Dict, diagnosis: str) -> str:
-    """Format medication recommendations from the AI expert"""
+    """
+    Format medication recommendations from the AI expert
+    
+    This function creates a comprehensive display of medication recommendations
+    including AI-generated advice, database matches, safety warnings, and
+    drug interaction alerts.
+    
+    Args:
+        recommendations (Dict): Medication recommendations from the system
+        diagnosis (str): Primary diagnosis for context
+        
+    Returns:
+        str: Formatted medication recommendations with safety information
+    """
     output = f"💊 **ENHANCED MEDICATION RECOMMENDATIONS FOR {diagnosis.upper()}**\n\n"
     
     # AI Recommendations section
