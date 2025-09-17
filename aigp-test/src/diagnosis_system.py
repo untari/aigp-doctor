@@ -27,6 +27,7 @@ from src.models.general_expert import GeneralAIExpert
 from src.models.secondary_analyzer import SecondaryAIAnalyzer
 from src.models.feedback_generator import ActionableFeedbackGenerator
 from src.models.medication_expert import MedicationRecommendationExpert
+from src.models.voice_system import VoiceSystem
 
 class DiagnosisSystem:
     """
@@ -71,8 +72,10 @@ class DiagnosisSystem:
         self.feedback_generator = ActionableFeedbackGenerator()     # Action recommendations
         self.medication_expert = MedicationRecommendationExpert()  # Medication advice
         
+        # Voice system for speech-to-text and text-to-speech capabilities
+        self.voice_system = VoiceSystem()                          # Complete voice interface
         
-        print("✅ System ready!")
+        print("✅ System ready with voice capabilities!")
 
     def comprehensive_diagnosis(self, symptoms: str, context: str = "") -> Dict:
         """
@@ -307,3 +310,183 @@ class DiagnosisSystem:
         if details: 
             log_entry += f": {details}"
         print(log_entry)
+
+    def voice_diagnosis(self, audio_file_path: str) -> Dict:
+        """
+        Complete voice diagnosis pipeline: STT → AI Analysis → TTS Response
+        
+        This method implements the complete voice consultation workflow:
+        1. Speech-to-Text: Transcribe patient's voice input using Whisper
+        2. AI Analysis: Process symptoms through the diagnosis system
+        3. Text-to-Speech: Generate and speak the diagnosis response
+        
+        Args:
+            audio_file_path (str): Path to recorded audio file
+            
+        Returns:
+            Dict: Complete voice diagnosis result containing:
+                - transcription: What the patient said
+                - transcription_confidence: Confidence in transcription accuracy
+                - diagnosis: Medical diagnosis result from AI analysis
+                - voice_response: Text that was spoken back to patient
+                - error: Error message if something went wrong
+        """
+        self.log_step("🎤 Starting voice diagnosis pipeline", f"Audio file: {audio_file_path}")
+        
+        # Step 1: Speech-to-Text - Transcribe patient's voice
+        self.log_step("🔄 Transcribing patient voice input")
+        symptoms_text, transcription_confidence = self.voice_system.transcribe_audio(audio_file_path)
+        
+        # Check transcription quality
+        if transcription_confidence < 0.3:
+            error_msg = "Could not understand audio clearly. Please try speaking again."
+            self.log_step("❌ Voice transcription failed", f"Confidence: {transcription_confidence:.2%}")
+            return {
+                "error": error_msg,
+                "transcription": symptoms_text,
+                "transcription_confidence": transcription_confidence,
+                "diagnosis": None,
+                "voice_response": None
+            }
+        
+        self.log_step("✅ Voice transcription successful", f"Patient said: '{symptoms_text}' (confidence: {transcription_confidence:.1%})")
+        
+        # Step 2: AI Analysis - Process the transcribed symptoms
+        self.log_step("🔍 Processing symptoms through AI diagnosis system")
+        diagnosis_result = self.comprehensive_diagnosis(symptoms_text)
+        
+        # Step 3: Prepare voice response for natural speech
+        voice_response = self._format_diagnosis_for_speech(diagnosis_result)
+        
+        # Step 4: Text-to-Speech - Speak the response (non-blocking)
+        self.log_step("🔊 Speaking diagnosis response to patient")
+        self.voice_system.speak(voice_response, wait=False)
+        
+        # Compile complete result
+        complete_result = {
+            "transcription": symptoms_text,
+            "transcription_confidence": transcription_confidence,
+            "diagnosis": diagnosis_result,
+            "voice_response": voice_response,
+            "error": None
+        }
+        
+        self.log_step("✅ Voice diagnosis pipeline complete", 
+                     f"Diagnosis: {diagnosis_result['diagnosis']} ({diagnosis_result['confidence']:.1%} confidence)")
+        
+        return complete_result
+
+    def _format_diagnosis_for_speech(self, diagnosis: Dict) -> str:
+        """
+        Format diagnosis result for natural speech output
+        
+        This method converts the technical diagnosis output into natural,
+        conversational language suitable for speaking to patients.
+        
+        Args:
+            diagnosis (Dict): Diagnosis result from the AI system
+            
+        Returns:
+            str: Formatted text optimized for speech synthesis
+        """
+        confidence_percent = int(diagnosis['confidence'] * 100)
+        
+        # Start with diagnosis statement
+        response = f"Based on your symptoms, my analysis suggests {diagnosis['diagnosis']} "
+        response += f"with {confidence_percent} percent confidence. "
+        
+        # Add severity-appropriate messaging
+        severity = diagnosis.get('severity', 'unknown')
+        if severity == 'emergency' or diagnosis.get('emergency_alert'):
+            response = "Emergency condition detected! " + response
+            response += "You should seek immediate medical attention. "
+        elif severity == 'severe':
+            response += "This appears to be a serious condition requiring prompt medical evaluation. "
+        elif severity == 'moderate':
+            response += "This condition should be evaluated by a healthcare provider soon. "
+        else:
+            response += "This appears to be a mild condition. "
+        
+        # Add specific emergency alerts if present
+        if diagnosis.get('emergency_alert'):
+            emergency_msg = diagnosis['emergency_alert'].get('message', '')
+            if emergency_msg:
+                response += f"Important: {emergency_msg} "
+        
+        # Add confidence-based recommendations
+        if diagnosis['confidence'] < 0.6:
+            response += "However, I recommend getting additional symptoms checked for a more accurate diagnosis. "
+        elif diagnosis['confidence'] > 0.8:
+            response += "This assessment has high confidence based on your symptoms. "
+        
+        # Add general medical disclaimer
+        response += "Please remember, this is an AI assessment for educational purposes only "
+        response += "and should not replace professional medical advice from a qualified healthcare provider."
+        
+        return response
+
+    def speak_diagnosis(self, diagnosis: Dict, wait: bool = False):
+        """
+        Speak a diagnosis result using text-to-speech
+        
+        Args:
+            diagnosis (Dict): Diagnosis result to speak
+            wait (bool): Whether to wait for speech to complete
+        """
+        voice_response = self._format_diagnosis_for_speech(diagnosis)
+        self.voice_system.speak(voice_response, wait=wait)
+        
+    def record_and_diagnose(self, duration: int = 15) -> Dict:
+        """
+        Record audio from microphone and perform complete voice diagnosis
+        
+        This is a convenience method that combines audio recording with
+        the complete voice diagnosis pipeline.
+        
+        Args:
+            duration (int): Maximum recording duration in seconds
+            
+        Returns:
+            Dict: Complete voice diagnosis result
+        """
+        self.log_step("🎤 Starting voice recording for diagnosis", f"Max duration: {duration}s")
+        
+        # Record audio
+        audio_file = self.voice_system.record_audio(duration=duration)
+        
+        if not audio_file:
+            return {
+                "error": "Failed to record audio. Please check your microphone.",
+                "transcription": None,
+                "transcription_confidence": 0.0,
+                "diagnosis": None,
+                "voice_response": None
+            }
+        
+        # Process the recorded audio
+        result = self.voice_diagnosis(audio_file)
+        
+        # Clean up temporary audio file
+        try:
+            import os
+            if os.path.exists(audio_file):
+                os.remove(audio_file)
+        except:
+            pass  # Ignore cleanup errors
+        
+        return result
+    
+    def stop_speaking(self):
+        """
+        Stop any ongoing speech output
+        """
+        self.voice_system.stop_speaking()
+        
+    def get_voice_system_status(self) -> Dict:
+        """
+        Get the status of the voice system components
+        
+        Returns:
+            Dict: Status information for voice system
+        """
+        return self.voice_system.is_system_ready()

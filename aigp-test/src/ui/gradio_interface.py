@@ -214,7 +214,8 @@ def create_chatbot_interface():
                 height=600,
                 elem_classes="chat-messages",
                 avatar_images=(None, None),
-                show_copy_button=True
+                show_copy_button=True,
+                type='messages'
             )
 
             # Input section with voice support
@@ -227,12 +228,24 @@ def create_chatbot_interface():
                         elem_classes="message-input"
                     )
                 with gr.Column(scale=1, min_width=100):
-                    upload_btn = gr.UploadButton(
-                        "📁 Image", 
-                        file_types=["image"],
-                        elem_classes="upload-button",
-                        size="sm"
-                    )
+                    with gr.Row():
+                        upload_btn = gr.UploadButton(
+                            "📁 Image", 
+                            file_types=["image"],
+                            elem_classes="upload-button",
+                            size="sm"
+                        )
+                        voice_btn = gr.Button(
+                            "🎤 Voice",
+                            elem_classes="upload-button",
+                            size="sm"
+                        )
+
+            # Hidden audio input for voice functionality (simplified like image upload)
+            audio_input = gr.Audio(
+                type="filepath",
+                visible=False
+            )
 
             # Action buttons with modern styling
             with gr.Row(elem_classes="action-buttons") as action_buttons:
@@ -289,20 +302,20 @@ def create_chatbot_interface():
 
             # Handle Image Upload with enhanced context integration
             if image_upload is not None:
-                history.append((None, (image_upload.name,)))
+                history.append({"role": "user", "content": {"path": image_upload.name}})
                 pil_image = Image.open(image_upload.name)  # SECURITY RISK: No validation
                 current_context = " ".join(state.get("context_history", []))
                 description = free_diagnosis_system.analyze_image_in_context(pil_image, current_context)
                 state["context_history"].append(description)
                 bot_message = f"I've analyzed the image in context. {description}. What are the primary symptoms?"
                 state["stage"] = "AWAITING_SYMPTOMS"
-                history.append((None, bot_message))
+                history.append({"role": "assistant", "content": bot_message})
                 return history, state, ask_q_update, provide_info_update, explain_update, medication_update
 
 
             # Add user message to conversation history
             if message:
-                history.append((message, None))
+                history.append({"role": "user", "content": message})
 
             # Enhanced State Machine Logic with A.I.(1) and A.I.(2) routing
             # This implements the conversation flow state machine
@@ -330,7 +343,7 @@ def create_chatbot_interface():
                     bot_message = "Thank you. Any pre-existing conditions, allergies, or relevant patient history? (e.g., 'diabetic, allergic to penicillin') If not, just say 'none')."
                     state["stage"] = "AWAITING_HISTORY"
 
-            elif stage == "AWAITING_HISTORY":
+            elif stage == "AWAITING_HISTORY" or stage == "AWAITING_HISTORY_VOICE":
                 state["context_history"].append(f"Patient History: {message}")
                 full_context = " ".join(state["context_history"])
                 # A.I.(1) - Primary diagnosis
@@ -386,7 +399,7 @@ def create_chatbot_interface():
                  bot_message = free_diagnosis_system.general_expert.answer(message)
 
             if bot_message:
-                history.append((None, bot_message))
+                history.append({"role": "assistant", "content": bot_message})
 
             # Update button visibility based on state
             if state["stage"] == "AWAITING_CLARIFICATION_CHOICE":
@@ -417,7 +430,7 @@ def create_chatbot_interface():
             # Defensive check to ensure diagnosis exists before asking questions
             if not state.get("last_diagnosis"):
                 bot_message = "I can't ask questions yet. Please describe the symptoms first."
-                history.append((None, bot_message))
+                history.append({"role": "assistant", "content": bot_message})
                 return history, state, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
 
             # Use A.I.(2) generated questions if available, otherwise fallback to general questions
@@ -430,7 +443,7 @@ def create_chatbot_interface():
                 questions = free_diagnosis_system.question_generator.generate_questions(diagnosis)
                 bot_message = f"Of course. Please answer the following:\n• {questions[0]}\n• {questions[1]}"
             
-            history.append((None, bot_message))
+            history.append({"role": "assistant", "content": bot_message})
             state["stage"] = "AWAITING_INFO"
             # Hide buttons after click to prevent multiple activations
             return history, state, gr.update(visible=False), gr.update(visible=False)
@@ -438,7 +451,7 @@ def create_chatbot_interface():
         def on_provide_info_click(state, history):
             history = history or []
             bot_message = "Please provide any additional information, test results, or observations."
-            history.append((None, bot_message))
+            history.append({"role": "assistant", "content": bot_message})
             state["stage"] = "AWAITING_INFO"
             # Hide buttons after click
             return history, state, gr.update(visible=False), gr.update(visible=False)
@@ -447,18 +460,18 @@ def create_chatbot_interface():
             history = history or []
             if not state.get("last_diagnosis"):
                 bot_message = "No diagnosis has been made yet."
-                history.append((None, bot_message))
+                history.append({"role": "assistant", "content": bot_message})
                 return history, state, gr.update(visible=False)
             diagnosis = state["last_diagnosis"]["diagnosis"]
             explanation = free_diagnosis_system.general_expert.answer(f"Please provide a detailed explanation of {diagnosis}.")
-            history.append((None, explanation))
+            history.append({"role": "assistant", "content": explanation})
             return history, state
 
         def on_medication_click(state, history):
             history = history or []
             if not state.get("last_diagnosis"):
                 bot_message = "No diagnosis has been made yet."
-                history.append((None, bot_message))
+                history.append({"role": "assistant", "content": bot_message})
                 return history, state
                 
             diagnosis = state["last_diagnosis"]["diagnosis"]
@@ -472,19 +485,197 @@ def create_chatbot_interface():
             
             # Format the medication recommendations
             bot_message = format_medication_recommendations(med_recommendations, diagnosis)
-            history.append((None, bot_message))
+            history.append({"role": "assistant", "content": bot_message})
             return history, state
+
+        def process_voice_input_simple(history, state):
+            """
+            Voice input handler with follow-up questions - matches text chat flow
+            Two-stage voice process: 1) Record symptoms → ask follow-up 2) Record history → diagnosis + TTS
+            """
+            history = history or []
+            
+            # Check if we're waiting for medical history response
+            if state.get("stage") == "AWAITING_HISTORY_VOICE":
+                # Validate required state for medical history collection
+                if not state.get("symptoms"):
+                    history.append({"role": "assistant", "content": "❌ Error: No symptoms recorded. Please start over by describing your symptoms first."})
+                    state["stage"] = "AWAITING_SYMPTOMS"
+                    return history, state, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+                # Second voice input - for medical history
+                try:
+                    recording_msg = """🎤 **RECORDING MEDICAL HISTORY**
+
+🔴 **Recording up to 15 seconds** (auto-stops when you finish)  
+
+💡 **What to say**:  
+• "None" (if no conditions)
+• "Diabetic, allergic to penicillin"  
+• "High blood pressure, heart condition"
+
+*🔊 Listening for your medical history...*"""
+                    
+                    history.append({"role": "assistant", "content": recording_msg})
+                    
+                    # Record and transcribe medical history
+                    audio_file = free_diagnosis_system.voice_system.record_audio(duration=15)
+                    if not audio_file:
+                        history.append({"role": "assistant", "content": "❌ Recording failed. Please try again or type your response."})
+                        return history, state, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+                    
+                    transcription, confidence = free_diagnosis_system.voice_system.transcribe_audio(audio_file)
+                    
+                    if confidence < 0.4:
+                        history.append({"role": "assistant", "content": f"❌ Could not clearly understand your response (confidence: {confidence:.1%}). Please try again."})
+                        return history, state, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+                    
+                    # Add transcribed history as user message
+                    history.append({"role": "user", "content": f"🎤 Medical history: '{transcription}'"})
+                    
+                    # Process through unified handler to get final diagnosis
+                    updated_history, updated_state, ask_q_update, provide_info_update, explain_update, medication_update = unified_handler(
+                        transcription, None, history, state
+                    )
+                    
+                    # Speak the final diagnosis
+                    try:
+                        if updated_state.get("last_diagnosis"):
+                            free_diagnosis_system.speak_diagnosis(updated_state["last_diagnosis"], wait=False)
+                            if updated_history and updated_history[-1]["role"] == "assistant":
+                                ai_message = updated_history[-1]["content"]
+                                updated_history[-1] = {"role": "assistant", "content": f"{ai_message}\n\n🔊 *AI is speaking this diagnosis*"}
+                    except Exception as tts_error:
+                        print(f"TTS error (non-critical): {tts_error}")
+                    
+                    return updated_history, updated_state, ask_q_update, provide_info_update, explain_update, medication_update
+                    
+                except Exception as e:
+                    error_msg = f"❌ Voice processing error: {str(e)}"
+                    history.append({"role": "assistant", "content": error_msg})
+                    return history, state, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+            
+            # First voice input - for symptoms
+            # Check voice system availability
+            if not free_diagnosis_system.voice_system or not free_diagnosis_system.voice_system.recognizer:
+                history.append({"role": "assistant", "content": "❌ Voice system not available. Please check your microphone and audio setup, or use text input instead."})
+                return history, state, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+                
+            try:
+                # Show immediate recording status with clear instructions
+                recording_msg = """🎤 **VOICE RECORDING ACTIVE**
+
+🔴 **Recording up to 20 seconds** (auto-stops when you finish)  
+⏸️ **Stops automatically** after 2 seconds of silence  
+⏱️ You have **5 seconds** to start speaking
+
+💡 **Examples of what to say**:  
+• "I have chest pain and shortness of breath"  
+• "My head hurts and I feel dizzy and nauseous"  
+• "I have a fever, cough, and sore throat"  
+• "I've been experiencing back pain for 3 days"
+
+🎯 **How it works**: Speak normally into your microphone. When you pause for 2 seconds, recording stops automatically. No rush!
+
+*🔊 Listening now... start speaking whenever you're ready*"""
+                
+                history.append({"role": "assistant", "content": recording_msg})
+                
+                # Record and transcribe symptoms only
+                audio_file = free_diagnosis_system.voice_system.record_audio(duration=20)
+                
+                if not audio_file:
+                    history.append({"role": "assistant", "content": "❌ Recording failed. Please check your microphone and try again."})
+                    return history, state, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+                
+                # Transcribe the recorded audio
+                transcription, confidence = free_diagnosis_system.voice_system.transcribe_audio(audio_file)
+                    
+            except Exception as e:
+                error_msg = f"❌ Voice processing system error: {str(e)}"
+                print(f"Voice processing error: {e}")
+                history.append({"role": "assistant", "content": error_msg})
+                return history, state, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+            
+            if not transcription or transcription.startswith("❌"):
+                history.append({"role": "assistant", "content": f"❌ Voice processing failed: {transcription}. Please try again."})
+                return history, state, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+            
+            # Enhanced transcription validation  
+            transcription_clean = transcription.lower().strip()
+            repeated_words = ['thank you', 'thank you.', 'thanks', 'hello', 'hello.', '', 'uh', 'um', 'hmm']
+            
+            # Check for poor transcription quality
+            is_poor_quality = (
+                confidence < 0.4 or  # Low confidence
+                len(transcription.split()) < 2 or  # Too short
+                transcription_clean in repeated_words or  # Repeated meaningless words
+                len(set(transcription.split())) < len(transcription.split()) * 0.7  # Too repetitive
+            )
+            
+            if is_poor_quality:
+                error_msg = f"❌ Transcription unclear (confidence: {confidence:.1%}). "
+                if confidence < 0.4:
+                    error_msg += "Please speak more clearly and loudly. "
+                if len(transcription.split()) < 2:
+                    error_msg += "Please speak longer phrases. "
+                if transcription_clean in repeated_words:
+                    error_msg += "No clear medical symptoms detected. "
+                
+                error_msg += "\n💡 Try: 'I have chest pain and fever' or 'My head hurts and I feel dizzy'"
+                history.append({"role": "assistant", "content": error_msg})
+                return history, state, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+            
+            try:
+                # Add transcribed symptoms as user message
+                history.append({"role": "user", "content": f"🎤 Symptoms: '{transcription}'"})
+                
+                # Store symptoms and ask for medical history (follow text chat flow)
+                state["symptoms"] = transcription
+                state["context_history"] = state.get("context_history", [])
+                state["context_history"].append(f"Symptoms: {transcription}")
+                state["stage"] = "AWAITING_HISTORY_VOICE"  # Set voice-specific stage
+                
+                # Ask for medical history via TTS and text
+                follow_up_msg = """Thank you. Any pre-existing conditions, allergies, or relevant patient history? 
+
+🎤 **Click the Voice button again to respond**, or type your answer:
+
+💡 **Examples**:
+• "None" (if no conditions)
+• "Diabetic, allergic to penicillin"  
+• "High blood pressure, heart condition"
+• "Asthma, no known allergies"
+
+If you have no medical history, just say **"none"**."""
+                
+                history.append({"role": "assistant", "content": follow_up_msg})
+                
+                # Speak the question for better voice experience
+                try:
+                    spoken_question = "Thank you. Do you have any pre-existing conditions, allergies, or relevant medical history? If not, just say none."
+                    free_diagnosis_system.voice_system.speak(spoken_question, wait=False)
+                except Exception as tts_error:
+                    print(f"TTS error (non-critical): {tts_error}")
+                
+                return history, state, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+                
+            except Exception as e:
+                error_msg = f"❌ AI processing error: {str(e)}"
+                print(f"AI processing error: {e}")
+                history.append({"role": "assistant", "content": error_msg})
+                return history, state, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
 
 
         # Link handlers to events
         txt_input.submit(lambda msg, hist, st: unified_handler(msg, None, hist, st), [txt_input, chatbot, case_state], [chatbot, case_state, ask_questions_btn, provide_info_btn, explain_btn, medication_btn], queue=False).then(lambda: "", None, txt_input)
         upload_btn.upload(lambda img, hist, st: unified_handler(None, img, hist, st), [upload_btn, chatbot, case_state], [chatbot, case_state, ask_questions_btn, provide_info_btn, explain_btn, medication_btn], queue=False)
-        
+        voice_btn.click(process_voice_input_simple, [chatbot, case_state], [chatbot, case_state, ask_questions_btn, provide_info_btn, explain_btn, medication_btn], queue=False)
 
         ask_questions_btn.click(on_ask_questions_click, [case_state, chatbot], [chatbot, case_state, ask_questions_btn, provide_info_btn])
         provide_info_btn.click(on_provide_info_click, [case_state, chatbot], [chatbot, case_state, ask_questions_btn, provide_info_btn])
         explain_btn.click(on_explain_click, [case_state, chatbot], [chatbot, case_state])
         medication_btn.click(on_medication_click, [case_state, chatbot], [chatbot, case_state])
+
 
         # Professional examples section
         with gr.Column(elem_classes="examples-section"):

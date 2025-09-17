@@ -6,3 +6,11 @@ sentence-transformers
 pandas
 Pillow
 accelerate
+openai-whisper
+pyttsx3
+pyaudio
+SpeechRecognition
+webrtcvad
+librosa
+soundfile
+coqui-tts
