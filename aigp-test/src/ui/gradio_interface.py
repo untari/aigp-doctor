@@ -396,7 +396,31 @@ def create_chatbot_interface():
                     state["stage"] = "AWAITING_CLARIFICATION_CHOICE"
 
             elif stage == "DIAGNOSIS_COMPLETE" and message:
-                 bot_message = free_diagnosis_system.general_expert.answer(message)
+                # Check if this is a new symptom description (start new diagnosis) or just a question
+                symptom_indicators = [
+                    "i have", "i'm experiencing", "i feel", "my", "pain", "hurt", "ache", "fever",
+                    "headache", "nausea", "dizzy", "tired", "cough", "sore", "swollen", "rash",
+                    "bleeding", "vomiting", "diarrhea", "constipation", "shortness", "breathing",
+                    "chest pain", "back pain", "stomach", "throat", "runny nose", "congestion"
+                ]
+
+                is_new_symptoms = any(indicator in message.lower() for indicator in symptom_indicators)
+
+                if is_new_symptoms:
+                    # Reset state for new diagnosis
+                    state = {
+                        "stage": "AWAITING_SYMPTOMS",
+                        "context_history": []
+                    }
+                    # Handle as new symptoms - proceed with formal diagnosis workflow
+                    state["symptoms"] = message
+                    state["context_history"].append(f"Symptoms: {message}")
+                    bot_message = "Thank you. Any pre-existing conditions, allergies, or relevant patient history? (e.g., 'diabetic, allergic to penicillin') If not, just say 'none')."
+                    state["stage"] = "AWAITING_HISTORY"
+                else:
+                    # Handle as general medical question
+                    bot_message = free_diagnosis_system.general_expert.answer(message)
+                    bot_message += "\n\n---\n\n💡 **Need a new diagnosis?** Describe your symptoms and I'll help analyze them."
 
             if bot_message:
                 history.append({"role": "assistant", "content": bot_message})
