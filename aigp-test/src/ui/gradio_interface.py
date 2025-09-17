@@ -28,10 +28,14 @@ from typing import Dict
 
 # Import the core diagnosis system
 from src.diagnosis_system import DiagnosisSystem
+from image_handler import MedicalImageHandler
 
 # Initialize the global diagnosis system instance
 # This is shared across all user sessions
 free_diagnosis_system = DiagnosisSystem()
+
+# Initialize the secure medical image handler
+medical_image_handler = MedicalImageHandler()
 
 def create_chatbot_interface():
     """
@@ -230,8 +234,9 @@ def create_chatbot_interface():
                 with gr.Column(scale=1, min_width=100):
                     with gr.Row():
                         upload_btn = gr.UploadButton(
-                            "📁 Image", 
+                            "📁 Medical Image",
                             file_types=["image"],
+                            file_count="single",
                             elem_classes="upload-button",
                             size="sm"
                         )
@@ -240,6 +245,23 @@ def create_chatbot_interface():
                             elem_classes="upload-button",
                             size="sm"
                         )
+
+            # Image upload feedback area (initially hidden)
+            with gr.Row(visible=False, elem_classes="upload-feedback") as image_feedback_area:
+                image_status = gr.Markdown("", elem_classes="upload-status")
+
+            # Image preview area (initially hidden)
+            with gr.Row(visible=False, elem_classes="image-preview") as image_preview_area:
+                with gr.Column(scale=1):
+                    image_preview = gr.Image(
+                        label="Uploaded Medical Image",
+                        show_label=True,
+                        interactive=False,
+                        height=200,
+                        elem_classes="medical-image-preview"
+                    )
+                with gr.Column(scale=2):
+                    image_info = gr.Markdown("", elem_classes="image-info")
 
             # Hidden audio input for voice functionality (simplified like image upload)
             audio_input = gr.Audio(
@@ -300,16 +322,35 @@ def create_chatbot_interface():
             explain_update = gr.update(visible=False)
             medication_update = gr.update(visible=False)
 
-            # Handle Image Upload with enhanced context integration
+            # Handle Image Upload with enhanced security and validation
             if image_upload is not None:
+                # Use secure image handler for validation and preprocessing
+                validation_result = medical_image_handler.validate_and_process_image(image_upload.name)
+
+                if not validation_result['is_valid']:
+                    # Image validation failed - show error message
+                    error_msg = f"❌ **Image Upload Failed**\n\n{validation_result['error_message']}"
+                    if validation_result.get('warnings'):
+                        error_msg += f"\n\n**Warnings:**\n" + "\n".join(f"• {w}" for w in validation_result['warnings'])
+                    error_msg += "\n\n💡 **Tips for better images:**\n• Use JPEG, PNG, or TIFF format\n• Keep file size under 15MB\n• Ensure image is clear and well-lit\n• Minimum size: 100x100 pixels"
+
+                    history.append({"role": "assistant", "content": error_msg})
+                    return history, state, ask_q_update, provide_info_update, explain_update, medication_update
+
+                # Image is valid - proceed with analysis
                 history.append({"role": "user", "content": {"path": image_upload.name}})
-                pil_image = Image.open(image_upload.name)  # SECURITY RISK: No validation
+                processed_image = validation_result['processed_image']
                 current_context = " ".join(state.get("context_history", []))
-                description = free_diagnosis_system.analyze_image_in_context(pil_image, current_context)
+                description = free_diagnosis_system.analyze_image_in_context(processed_image, current_context)
                 state["context_history"].append(description)
-                bot_message = f"I've analyzed the image in context. {description}. What are the primary symptoms?"
+
+                # Enhanced success message with image info
+                success_msg = f"✅ **Medical Image Analyzed Successfully**\n\n{description}.\n\nWhat are the primary symptoms?"
+                if validation_result.get('warnings'):
+                    success_msg += f"\n\n**Processing Notes:**\n" + "\n".join(f"• {w}" for w in validation_result['warnings'])
+
                 state["stage"] = "AWAITING_SYMPTOMS"
-                history.append({"role": "assistant", "content": bot_message})
+                history.append({"role": "assistant", "content": success_msg})
                 return history, state, ask_q_update, provide_info_update, explain_update, medication_update
 
 
@@ -333,8 +374,11 @@ def create_chatbot_interface():
                 
                 if is_question:
                     # Handle as a general medical question using the general AI expert
-                    bot_message = free_diagnosis_system.general_expert.answer(message)
-                    bot_message += "\n\n---\n\n💡 **Need a diagnosis?** Describe your symptoms and I'll help analyze them."
+                    try:
+                        bot_message = free_diagnosis_system.general_expert.answer(message)
+                        bot_message += "\n\n---\n\n💡 **Need a diagnosis?** Describe your symptoms and I'll help analyze them."
+                    except Exception as e:
+                        bot_message = "I'm having trouble processing your question right now. Please describe your symptoms for a medical diagnosis."
                     # Stay in AWAITING_SYMPTOMS state for potential follow-up
                 else:
                     # Handle as symptoms - proceed with formal diagnosis workflow
@@ -344,26 +388,30 @@ def create_chatbot_interface():
                     state["stage"] = "AWAITING_HISTORY"
 
             elif stage == "AWAITING_HISTORY" or stage == "AWAITING_HISTORY_VOICE":
-                state["context_history"].append(f"Patient History: {message}")
-                full_context = " ".join(state["context_history"])
-                # A.I.(1) - Primary diagnosis
-                diagnosis_result = free_diagnosis_system.comprehensive_diagnosis(state["symptoms"], full_context)
-                state["last_diagnosis"] = diagnosis_result
+                try:
+                    state["context_history"].append(f"Patient History: {message}")
+                    full_context = " ".join(state["context_history"])
+                    # A.I.(1) - Primary diagnosis
+                    diagnosis_result = free_diagnosis_system.comprehensive_diagnosis(state["symptoms"], full_context)
+                    state["last_diagnosis"] = diagnosis_result
 
-                if diagnosis_result['confidence'] > 0.75:
-                    bot_message = format_diagnosis_output(diagnosis_result, is_final=True)
-                    state["stage"] = "DIAGNOSIS_COMPLETE"
-                else:
-                    # A.I.(2) - Secondary analysis for low confidence
-                    secondary_result = free_diagnosis_system.secondary_analysis(state["symptoms"], diagnosis_result)
-                    state["secondary_analysis"] = secondary_result
-                    
-                    bot_message = format_diagnosis_output(diagnosis_result, is_final=False)
-                    bot_message += f"\n\n🤖 **A.I.(2) Suggests:**\n"
-                    bot_message += f"**Questions:** {', '.join(secondary_result['follow_up_questions'])}\n"
-                    bot_message += f"**Tests:** {', '.join(secondary_result['suggested_tests'])}\n"
-                    bot_message += "\nWhat would you like to do?"
-                    state["stage"] = "AWAITING_CLARIFICATION_CHOICE"
+                    if diagnosis_result['confidence'] > 0.75:
+                        bot_message = format_diagnosis_output(diagnosis_result, is_final=True)
+                        state["stage"] = "DIAGNOSIS_COMPLETE"
+                    else:
+                        # A.I.(2) - Secondary analysis for low confidence
+                        secondary_result = free_diagnosis_system.secondary_analysis(state["symptoms"], diagnosis_result)
+                        state["secondary_analysis"] = secondary_result
+
+                        bot_message = format_diagnosis_output(diagnosis_result, is_final=False)
+                        bot_message += f"\n\n🤖 **A.I.(2) Suggests:**\n"
+                        bot_message += f"**Questions:** {', '.join(secondary_result['follow_up_questions'])}\n"
+                        bot_message += f"**Tests:** {', '.join(secondary_result['suggested_tests'])}\n"
+                        bot_message += "\nWhat would you like to do?"
+                        state["stage"] = "AWAITING_CLARIFICATION_CHOICE"
+                except Exception as e:
+                    bot_message = "I'm having trouble analyzing your symptoms right now. Please try describing them again or restart the conversation."
+                    state["stage"] = "AWAITING_SYMPTOMS"
 
             elif stage == "AWAITING_CLARIFICATION_CHOICE":
                 bot_message = "Please choose an option below or provide additional information directly."
@@ -419,8 +467,11 @@ def create_chatbot_interface():
                     state["stage"] = "AWAITING_HISTORY"
                 else:
                     # Handle as general medical question
-                    bot_message = free_diagnosis_system.general_expert.answer(message)
-                    bot_message += "\n\n---\n\n💡 **Need a new diagnosis?** Describe your symptoms and I'll help analyze them."
+                    try:
+                        bot_message = free_diagnosis_system.general_expert.answer(message)
+                        bot_message += "\n\n---\n\n💡 **Need a new diagnosis?** Describe your symptoms and I'll help analyze them."
+                    except Exception as e:
+                        bot_message = "I'm having trouble answering that question. Please describe your symptoms for a new medical diagnosis."
 
             if bot_message:
                 history.append({"role": "assistant", "content": bot_message})
@@ -463,9 +514,12 @@ def create_chatbot_interface():
                 bot_message = f"🤖 **A.I.(2) asks:** Please answer these specific questions:\n• {questions[0]}\n• {questions[1] if len(questions) > 1 else 'Any additional symptoms or changes?'}"
             else:
                 # Fallback to general question generation
-                diagnosis = state["last_diagnosis"]["diagnosis"]
-                questions = free_diagnosis_system.question_generator.generate_questions(diagnosis)
-                bot_message = f"Of course. Please answer the following:\n• {questions[0]}\n• {questions[1]}"
+                try:
+                    diagnosis = state["last_diagnosis"]["diagnosis"]
+                    questions = free_diagnosis_system.question_generator.generate_questions(diagnosis)
+                    bot_message = f"Of course. Please answer the following:\n• {questions[0]}\n• {questions[1]}"
+                except Exception as e:
+                    bot_message = "Let me ask some general questions:\n• How long have you had these symptoms?\n• Are the symptoms getting better, worse, or staying the same?"
             
             history.append({"role": "assistant", "content": bot_message})
             state["stage"] = "AWAITING_INFO"
@@ -487,7 +541,10 @@ def create_chatbot_interface():
                 history.append({"role": "assistant", "content": bot_message})
                 return history, state, gr.update(visible=False)
             diagnosis = state["last_diagnosis"]["diagnosis"]
-            explanation = free_diagnosis_system.general_expert.answer(f"Please provide a detailed explanation of {diagnosis}.")
+            try:
+                explanation = free_diagnosis_system.general_expert.answer(f"Please provide a detailed explanation of {diagnosis}.")
+            except Exception as e:
+                explanation = f"I'm having trouble generating a detailed explanation right now. {diagnosis} is the current diagnosis. Please consult with a healthcare professional for detailed information."
             history.append({"role": "assistant", "content": explanation})
             return history, state
 
@@ -501,11 +558,17 @@ def create_chatbot_interface():
             diagnosis = state["last_diagnosis"]["diagnosis"]
             symptoms = state.get("symptoms", "")
             severity = state["last_diagnosis"].get("severity", "mild")
-            
-            # Get enhanced medication recommendations
-            med_recommendations = free_diagnosis_system.get_enhanced_medication_recommendations(
-                diagnosis, symptoms, severity
-            )
+
+            try:
+                # Get enhanced medication recommendations
+                med_recommendations = free_diagnosis_system.get_enhanced_medication_recommendations(
+                    diagnosis, symptoms, severity
+                )
+            except Exception as e:
+                med_recommendations = {
+                    'error': True,
+                    'message': "I'm having trouble generating medication recommendations right now. Please consult with a healthcare professional for appropriate treatment options."
+                }
             
             # Format the medication recommendations
             bot_message = format_medication_recommendations(med_recommendations, diagnosis)
