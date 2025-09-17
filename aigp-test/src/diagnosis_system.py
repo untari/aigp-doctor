@@ -241,7 +241,7 @@ class DiagnosisSystem:
             try:
                 # Create contextualized prompt for medical relevance analysis
                 prompt = f"How does this image relate to these symptoms: {current_context}. Image shows: {image_description}"
-                result = self.secondary_ai.analyzer(prompt, max_new_tokens=100, temperature=0.3)
+                result = self.secondary_ai.analyzer(prompt, max_new_tokens=100)
                 contextualized_analysis = result[0]["generated_text"]
                 return f"Image analysis: {image_description}. Medical relevance: {contextualized_analysis}"
             except (KeyError, IndexError, AttributeError) as e:
