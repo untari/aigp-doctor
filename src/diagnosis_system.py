@@ -242,8 +242,15 @@ class DiagnosisSystem:
                 # Create contextualized prompt for medical relevance analysis
                 prompt = f"How does this image relate to these symptoms: {current_context}. Image shows: {image_description}"
                 result = self.secondary_ai.analyzer(prompt, max_new_tokens=100)
-                contextualized_analysis = result[0]["generated_text"]
-                return f"Image analysis: {image_description}. Medical relevance: {contextualized_analysis}"
+                full_response = result[0]["generated_text"]
+
+                # Extract only the new generated text after the prompt
+                if prompt in full_response:
+                    contextualized_analysis = full_response.replace(prompt, "").strip()
+                else:
+                    contextualized_analysis = full_response
+
+                return f"Image analysis: {image_description}\n\nMedical relevance: {contextualized_analysis}"
             except (KeyError, IndexError, AttributeError) as e:
                 # Handle data access errors gracefully
                 print(f"Error accessing AI analysis result: {e}")

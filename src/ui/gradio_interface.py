@@ -345,11 +345,18 @@ def create_chatbot_interface():
                 state["context_history"].append(description)
 
                 # Enhanced success message with image info
-                success_msg = f"✅ **Medical Image Analyzed Successfully**\n\n{description}.\n\nWhat are the primary symptoms?"
+                if state.get("symptoms"):
+                    # We already have symptoms, so this is supplementary visual information
+                    success_msg = f"✅ **Medical Image Analyzed Successfully**\n\n{description}.\n\nImage analysis has been added to your case. Any additional symptoms or information?"
+                    # Set stage to handle additional info, not new symptoms
+                    state["stage"] = "AWAITING_INFO"
+                else:
+                    # No symptoms yet, so ask for them
+                    success_msg = f"✅ **Medical Image Analyzed Successfully**\n\n{description}.\n\nWhat are the primary symptoms?"
+                    state["stage"] = "AWAITING_SYMPTOMS"
+
                 if validation_result.get('warnings'):
                     success_msg += f"\n\n**Processing Notes:**\n" + "\n".join(f"• {w}" for w in validation_result['warnings'])
-
-                state["stage"] = "AWAITING_SYMPTOMS"
                 history.append({"role": "assistant", "content": success_msg})
                 return history, state, ask_q_update, provide_info_update, explain_update, medication_update
 
@@ -383,14 +390,17 @@ def create_chatbot_interface():
                 else:
                     # Handle as symptoms - proceed with formal diagnosis workflow
                     state["symptoms"] = message
-                    state["context_history"].append(f"Symptoms: {message}")
+                    state["context_history"].append(message)
+                    state["symptoms_text"] = message  # Store clean symptoms separately
                     bot_message = "Thank you. Any pre-existing conditions, allergies, or relevant patient history? (e.g., 'diabetic, allergic to penicillin') If not, just say 'none')."
                     state["stage"] = "AWAITING_HISTORY"
 
             elif stage == "AWAITING_HISTORY" or stage == "AWAITING_HISTORY_VOICE":
                 try:
-                    state["context_history"].append(f"Patient History: {message}")
-                    full_context = " ".join(state["context_history"])
+                    state["patient_history"] = message  # Store clean patient history
+                    state["context_history"].append(message)
+                    # Build clean context for diagnosis
+                    full_context = f"Symptoms: {state.get('symptoms_text', state.get('symptoms', ''))}. Patient History: {message}"
                     # A.I.(1) - Primary diagnosis
                     diagnosis_result = free_diagnosis_system.comprehensive_diagnosis(state["symptoms"], full_context)
                     state["last_diagnosis"] = diagnosis_result
@@ -417,8 +427,10 @@ def create_chatbot_interface():
                 bot_message = "Please choose an option below or provide additional information directly."
 
             elif stage == "AWAITING_INFO":
-                state["context_history"].append(f"Additional Info: {message}")
-                full_context = " ".join(state["context_history"])
+                state["additional_info"] = message  # Store clean additional info
+                state["context_history"].append(message)
+                # Build clean context for enhanced diagnosis
+                full_context = f"Symptoms: {state.get('symptoms_text', state.get('symptoms', ''))}. Patient History: {state.get('patient_history', 'none')}. Additional Info: {message}"
                 
                 # A.I.(1) re-analysis with enhanced context
                 diagnosis_result = free_diagnosis_system.enhanced_diagnosis_with_context(
@@ -462,7 +474,8 @@ def create_chatbot_interface():
                     }
                     # Handle as new symptoms - proceed with formal diagnosis workflow
                     state["symptoms"] = message
-                    state["context_history"].append(f"Symptoms: {message}")
+                    state["symptoms_text"] = message  # Store clean symptoms
+                    state["context_history"].append(message)
                     bot_message = "Thank you. Any pre-existing conditions, allergies, or relevant patient history? (e.g., 'diabetic, allergic to penicillin') If not, just say 'none')."
                     state["stage"] = "AWAITING_HISTORY"
                 else:
@@ -718,8 +731,9 @@ def create_chatbot_interface():
                 
                 # Store symptoms and ask for medical history (follow text chat flow)
                 state["symptoms"] = transcription
+                state["symptoms_text"] = transcription  # Store clean symptoms
                 state["context_history"] = state.get("context_history", [])
-                state["context_history"].append(f"Symptoms: {transcription}")
+                state["context_history"].append(transcription)
                 state["stage"] = "AWAITING_HISTORY_VOICE"  # Set voice-specific stage
                 
                 # Ask for medical history via TTS and text
