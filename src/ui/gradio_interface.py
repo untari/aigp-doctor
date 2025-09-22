@@ -13,6 +13,8 @@ Key Features:
 - Chat-style conversation flow
 - Image upload and analysis capabilities
 - Dynamic button interactions
+- Robust error handling and user feedback
+- Progress indicators for better UX
 - State management for multi-turn conversations
 - Comprehensive medical disclaimers
 
@@ -405,7 +407,7 @@ def create_chatbot_interface():
                     diagnosis_result = free_diagnosis_system.comprehensive_diagnosis(state["symptoms"], full_context)
                     state["last_diagnosis"] = diagnosis_result
 
-                    if diagnosis_result['confidence'] > 0.75:
+                    if diagnosis_result['confidence'] > 0.85:
                         bot_message = format_diagnosis_output(diagnosis_result, is_final=True)
                         state["stage"] = "DIAGNOSIS_COMPLETE"
                     else:
@@ -424,7 +426,45 @@ def create_chatbot_interface():
                     state["stage"] = "AWAITING_SYMPTOMS"
 
             elif stage == "AWAITING_CLARIFICATION_CHOICE":
-                bot_message = "Please choose an option below or provide additional information directly."
+                # Check if this is completely new symptoms or additional info
+                potential_new_symptoms = ["chest pain", "cough", "sadness", "depression", "headache", "back pain", "nausea"]
+                is_new_symptoms = any(symptom in message.lower() for symptom in potential_new_symptoms)
+
+                if is_new_symptoms and len(message.split()) > 3:
+                    # Treat as new symptoms - start fresh diagnosis
+                    state = {
+                        "stage": "AWAITING_HISTORY",
+                        "symptoms": message,
+                        "symptoms_text": message,
+                        "context_history": [message]
+                    }
+                    bot_message = "I see you're describing new symptoms. Thank you. Any pre-existing conditions, allergies, or relevant patient history? (e.g., 'diabetic, allergic to penicillin') If not, just say 'none')."
+                else:
+                    # Treat as additional information for existing case
+                    state["additional_info"] = message
+                    state["context_history"].append(message)
+                    # Build clean context for enhanced diagnosis
+                    full_context = f"Symptoms: {state.get('symptoms_text', state.get('symptoms', ''))}. Patient History: {state.get('patient_history', 'none')}. Additional Info: {message}"
+
+                    # A.I.(1) re-analysis with enhanced context
+                    diagnosis_result = free_diagnosis_system.enhanced_diagnosis_with_context(
+                        state["symptoms"], full_context, state["last_diagnosis"]
+                    )
+                    state["last_diagnosis"] = diagnosis_result
+
+                    if diagnosis_result['confidence'] > 0.85:
+                        bot_message = format_diagnosis_output(diagnosis_result, is_final=True)
+                        state["stage"] = "DIAGNOSIS_COMPLETE"
+                    else:
+                        # Still low confidence - run A.I.(2) again with new info
+                        secondary_result = free_diagnosis_system.secondary_analysis(state["symptoms"], diagnosis_result)
+                        state["secondary_analysis"] = secondary_result
+
+                        bot_message = format_diagnosis_output(diagnosis_result, is_final=False)
+                        bot_message += f"\n\n🤖 **A.I.(2) Additional Suggestions:**\n"
+                        bot_message += f"**Questions:** {', '.join(secondary_result['follow_up_questions'])}\n"
+                        bot_message += f"**Tests:** {', '.join(secondary_result['suggested_tests'])}\n"
+                        bot_message += "\nYou can provide more information or I can ask more specific questions."
 
             elif stage == "AWAITING_INFO":
                 state["additional_info"] = message  # Store clean additional info
