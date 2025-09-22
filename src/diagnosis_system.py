@@ -16,6 +16,23 @@ Security Note: All models run locally without external API calls for privacy.
 
 from datetime import datetime
 from typing import Dict
+import logging
+import traceback
+import time
+import gc
+import psutil
+import re
+
+# Configure logging for robustness
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('ai_gp_doctor.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Import all specialized AI model components
 from src.models.biobert import BioBERTDiagnosis
@@ -75,7 +92,32 @@ class DiagnosisSystem:
         # Voice system for speech-to-text and text-to-speech capabilities
         self.voice_system = VoiceSystem()                          # Complete voice interface
         
+        # Rate limiting and performance tracking
+        self.last_request_time = 0
+        self.request_count = 0
+        self.min_request_interval = 1.0  # Minimum 1 second between requests
+
         print("✅ System ready with voice capabilities!")
+
+    def _check_rate_limit(self) -> bool:
+        """Check if request rate limit is exceeded"""
+        current_time = time.time()
+        if current_time - self.last_request_time < self.min_request_interval:
+            return False
+        self.last_request_time = current_time
+        self.request_count += 1
+        return True
+
+    def _monitor_memory_usage(self):
+        """Monitor and log memory usage"""
+        try:
+            process = psutil.Process()
+            memory_mb = process.memory_info().rss / 1024 / 1024
+            if memory_mb > 2048:  # Alert if using more than 2GB
+                logger.warning(f"High memory usage: {memory_mb:.1f}MB")
+                gc.collect()  # Force garbage collection
+        except Exception as e:
+            logger.debug(f"Memory monitoring failed: {str(e)}")
 
     def comprehensive_diagnosis(self, symptoms: str, context: str = "") -> Dict:
         """
@@ -98,54 +140,190 @@ class DiagnosisSystem:
                 - reasoning: Explanation of the analysis process
                 - ai_stage: Identifies this as "primary" analysis
         """
-        self.log_step("🔍 A.I.(1) Starting comprehensive analysis", f"Symptoms: {symptoms}, Context: {context}")
+        try:
+            # Rate limiting check
+            if not self._check_rate_limit():
+                logger.warning("Rate limit exceeded")
+                return self._create_fallback_diagnosis("Please wait before making another request")
+
+            # Memory monitoring
+            self._monitor_memory_usage()
+
+            logger.info(f"Starting comprehensive diagnosis for symptoms: {symptoms[:50]}...")
+            start_time = time.time()
+
+            self.log_step("🔍 A.I.(1) Starting comprehensive analysis", f"Symptoms: {symptoms}, Context: {context}")
+
+            # Input validation and sanitization
+            symptoms = self._validate_and_sanitize_input(symptoms)
+            context = self._validate_and_sanitize_input(context)
+
+            # Check input quality
+            is_valid, validation_message = self._check_input_quality(symptoms)
+            if not is_valid:
+                logger.warning(f"Invalid input provided: {validation_message}")
+                return self._create_fallback_diagnosis(validation_message)
+
+            # Emergency detection - highest priority check with error handling
+            emergency_alert = None
+            try:
+                emergency_alert = self.feedback_generator.generate_emergency_recommendations(symptoms)
+                logger.debug("Emergency detection completed successfully")
+            except Exception as e:
+                logger.error(f"Emergency detection failed: {str(e)}")
+                emergency_alert = {"alert": False, "reason": "", "action": ""}
+
+            # Parallel model analysis with individual error handling
+            results = {}
+
+            # BioBERT analysis with fallback
+            try:
+                results['biobert'] = self.biobert.diagnose(symptoms, context)
+                logger.debug("BioBERT analysis completed")
+            except Exception as e:
+                logger.error(f"BioBERT analysis failed: {str(e)}")
+                results['biobert'] = {'diagnosis': 'Analysis Error', 'confidence': 0.3, 'reasoning': 'BioBERT unavailable'}
+
+            # Clinical BERT analysis with fallback
+            try:
+                results['clinical_bert'] = self.clinical_bert.analyze_severity(symptoms)
+                logger.debug("Clinical BERT analysis completed")
+            except Exception as e:
+                logger.error(f"Clinical BERT analysis failed: {str(e)}")
+                results['clinical_bert'] = {'severity': 'Unknown', 'confidence': 0.3, 'reasoning': 'Clinical BERT unavailable'}
+
+            # Sentence Transformer analysis with fallback
+            try:
+                results['sentence_transformer'] = self.sentence_transformer.find_similar_cases(symptoms)
+                logger.debug("Sentence Transformer analysis completed")
+            except Exception as e:
+                logger.error(f"Sentence Transformer analysis failed: {str(e)}")
+                results['sentence_transformer'] = {'similar_case': 'No similar cases found', 'confidence': 0.3, 'reasoning': 'Sentence Transformer unavailable'}
+
+            # Extract results with safe defaults
+            biobert_result = results.get('biobert', {'diagnosis': 'Requires Further Evaluation', 'confidence': 0.3, 'reasoning': 'Analysis unavailable'})
+            severity_result = results.get('clinical_bert', {'severity': 'Unknown', 'confidence': 0.3, 'reasoning': 'Severity analysis unavailable'})
+            similarity_result = results.get('sentence_transformer', {'similar_case': 'No similar cases', 'confidence': 0.3, 'reasoning': 'Case similarity unavailable'})
+
+            # Weighted ensemble confidence calculation with safe access
+            # BioBERT gets highest weight (50%) as primary medical model
+            # Clinical BERT gets 20% for severity assessment
+            # Sentence Transformer gets 30% for case similarity
+            base_confidence = (biobert_result['confidence'] * 0.5 +
+                              severity_result['confidence'] * 0.2 +
+                              similarity_result['confidence'] * 0.3)
+
+            # Context bonus calculation
+            # Additional context information increases confidence up to 10%
+            context_bonus = min(len(context.split()) * 0.01, 0.1) if context else 0
+
+            # Final confidence with severity adjustments
+            final_confidence = base_confidence + context_bonus
+
+            # Severity-based confidence adjustments
+            if severity_result['severity'] == 'severe':
+                final_confidence = min(final_confidence + 0.1, 0.95)  # Cap at 95%
+            elif severity_result['severity'] == 'mild':
+                final_confidence = max(final_confidence - 0.1, 0.3)   # Floor at 30%
+
+            # Construct comprehensive result dictionary
+            result = {
+                "diagnosis": biobert_result['diagnosis'],
+                "confidence": final_confidence,
+                "severity": severity_result['severity'],
+                "similar_case": similarity_result['similar_case'],
+                "reasoning": f"A.I.(1) Multi-model analysis: BioBERT ({biobert_result['confidence']:.2f}), ClinicalBERT ({severity_result['confidence']:.2f}), SentenceTransformer ({similarity_result['confidence']:.2f}), Context bonus: {context_bonus:.2f}",
+                "ai_stage": "primary"
+            }
         
-        # Emergency detection - highest priority check
-        # This must be performed first to identify life-threatening conditions
-        emergency_alert = self.feedback_generator.generate_emergency_recommendations(symptoms)
-        
-        # Parallel model analysis for comprehensive assessment
-        biobert_result = self.biobert.diagnose(symptoms, context)              # Medical text analysis
-        severity_result = self.clinical_bert.analyze_severity(symptoms)        # Severity assessment
-        similarity_result = self.sentence_transformer.find_similar_cases(symptoms)  # Case similarity
-        
-        # Weighted ensemble confidence calculation
-        # BioBERT gets highest weight (50%) as primary medical model
-        # Clinical BERT gets 20% for severity assessment
-        # Sentence Transformer gets 30% for case similarity
-        base_confidence = (biobert_result['confidence'] * 0.5 + 
-                          severity_result['confidence'] * 0.2 + 
-                          similarity_result['confidence'] * 0.3)
-        
-        # Context bonus calculation
-        # Additional context information increases confidence up to 10%
-        context_bonus = min(len(context.split()) * 0.01, 0.1) if context else 0
-        
-        # Final confidence with severity adjustments
-        final_confidence = base_confidence + context_bonus
-        
-        # Severity-based confidence adjustments
-        if severity_result['severity'] == 'severe': 
-            final_confidence = min(final_confidence + 0.1, 0.95)  # Cap at 95%
-        elif severity_result['severity'] == 'mild': 
-            final_confidence = max(final_confidence - 0.1, 0.3)   # Floor at 30%
-        
-        # Construct comprehensive result dictionary
-        result = {
-            "diagnosis": biobert_result['diagnosis'],
-            "confidence": final_confidence,
-            "severity": severity_result['severity'],
-            "similar_case": similarity_result['similar_case'],
-            "reasoning": f"A.I.(1) Multi-model analysis: BioBERT ({biobert_result['confidence']:.2f}), ClinicalBERT ({severity_result['confidence']:.2f}), SentenceTransformer ({similarity_result['confidence']:.2f}), Context bonus: {context_bonus:.2f}",
-            "ai_stage": "primary"
+            # Override with emergency alert if critical condition detected
+            # Handle both string and dict emergency alerts
+            if emergency_alert:
+                if isinstance(emergency_alert, str) and emergency_alert.strip():
+                    # String format emergency alert
+                    result["emergency_alert"] = {
+                        "alert": True,
+                        "message": emergency_alert,
+                        "reason": "Emergency keywords detected"
+                    }
+                    result["severity"] = "emergency"
+                    logger.warning(f"Emergency condition detected: {emergency_alert[:100]}")
+                elif isinstance(emergency_alert, dict) and emergency_alert.get("alert", False):
+                    # Dict format emergency alert
+                    result["emergency_alert"] = emergency_alert
+                    result["severity"] = "emergency"
+                    logger.warning(f"Emergency condition detected: {emergency_alert.get('reason', 'Unknown')}")
+
+            # Log performance metrics
+            end_time = time.time()
+            logger.info(f"Comprehensive diagnosis completed in {end_time - start_time:.2f}s with confidence {final_confidence:.2f}")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Critical error in comprehensive diagnosis: {str(e)}")
+            logger.error(f"Stack trace: {traceback.format_exc()}")
+            return self._create_fallback_diagnosis(f"System temporarily unavailable: {str(e)[:50]}")
+
+    def _create_fallback_diagnosis(self, error_message: str) -> Dict:
+        """Create a safe fallback diagnosis when main system fails"""
+        logger.warning(f"Using fallback diagnosis: {error_message}")
+        return {
+            "diagnosis": "System Analysis Unavailable",
+            "confidence": 0.2,
+            "severity": "unknown",
+            "similar_case": "Please consult healthcare provider",
+            "reasoning": f"Fallback response: {error_message}",
+            "ai_stage": "fallback",
+            "emergency_alert": {"alert": False, "reason": "System error", "action": "Seek medical attention if symptoms are severe"}
         }
-        
-        # Override with emergency alert if critical condition detected
-        if emergency_alert:
-            result["emergency_alert"] = emergency_alert
-            result["severity"] = "emergency"
-        
-        return result
+
+    def _validate_and_sanitize_input(self, text: str, max_length: int = 1000) -> str:
+        """Validate and sanitize user input for security and reliability"""
+        if not text:
+            return ""
+
+        # Remove dangerous characters and trim
+        # Remove potential script injection attempts
+        text = re.sub(r'<[^>]*>', '', text)  # Remove HTML tags
+        text = re.sub(r'[^\w\s\-.,?!:;()\'/"]', '', text)  # Keep only safe characters
+
+        # Limit length to prevent memory issues
+        text = text[:max_length]
+
+        # Normalize whitespace
+        text = ' '.join(text.split())
+
+        logger.debug(f"Input sanitized: original length {len(text)}, final length {len(text)}")
+        return text.strip()
+
+    def _check_input_quality(self, symptoms: str) -> tuple[bool, str]:
+        """Check if input symptoms are of sufficient quality for analysis"""
+        if not symptoms or len(symptoms.strip()) < 3:
+            return False, "Please provide more detailed symptom description"
+
+        # Check for common non-medical inputs
+        non_medical_patterns = [
+            r'\b(hello|hi|hey|test|testing)\b',
+            r'\b(how are you|what is|who are)\b',
+            r'\b(weather|news|sports)\b'
+        ]
+
+        for pattern in non_medical_patterns:
+            if re.search(pattern, symptoms.lower()):
+                return False, "Please describe medical symptoms rather than general questions"
+
+        # Check if it contains at least one potential symptom word
+        symptom_words = [
+            'pain', 'ache', 'hurt', 'fever', 'headache', 'nausea', 'tired', 'fatigue',
+            'cough', 'shortness', 'breathing', 'chest', 'stomach', 'back', 'dizzy',
+            'swelling', 'rash', 'itching', 'burning', 'numbness', 'tingling'
+        ]
+
+        if not any(word in symptoms.lower() for word in symptom_words):
+            return False, "Please describe specific medical symptoms you're experiencing"
+
+        return True, "Input appears to be valid medical symptoms"
 
     def enhanced_diagnosis_with_context(self, symptoms: str, all_context: str, previous_diagnosis: Dict) -> Dict:
         """
