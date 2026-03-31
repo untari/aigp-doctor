@@ -11,6 +11,7 @@ open-source models including BioBERT, Clinical BERT, and image analysis models.
 
 import sys
 import os
+import gradio as gr
 
 # Add src directory to Python path to enable module imports
 # This allows importing from the src package structure
@@ -31,4 +32,4 @@ if __name__ == "__main__":
     # Launch the web interface
     # share=False: Prevents automatic public sharing for security
     # debug=False: Disables debug mode to prevent information disclosure
-    chatbot_demo.launch(share=False, debug=False)
+    chatbot_demo.launch(share=False, debug=False, theme=gr.themes.Base())
