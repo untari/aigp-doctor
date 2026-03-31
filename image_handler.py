@@ -27,11 +27,15 @@ License: Open Source for Educational Use
 import os
 import mimetypes
 import hashlib
+import logging
 from typing import Dict, List, Tuple, Optional, Union
 from PIL import Image, ImageEnhance, ImageFilter
 import numpy as np
 import tempfile
 import io
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Try to import python-magic, fallback to mimetypes if not available
 try:
@@ -39,7 +43,7 @@ try:
     MAGIC_AVAILABLE = True
 except ImportError:
     MAGIC_AVAILABLE = False
-    print("⚠️ python-magic not available - using basic file type detection")
+    logger.warning("python-magic not available - using basic file type detection")
 
 class MedicalImageHandler:
     """

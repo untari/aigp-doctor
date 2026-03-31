@@ -1228,7 +1228,7 @@ class VoiceSystem:
             try:
                 self.tts_engine.stop()
                 print("🔇 Speech stopped")
-            except:
+            except Exception:
                 pass
         
         # Clear the TTS queue
@@ -1280,7 +1280,7 @@ class VoiceSystem:
                 current_voice = self.tts_engine.getProperty('voice')
                 info["available_voices"] = len(voices)
                 info["current_voice"] = "Medical optimized"
-            except:
+            except Exception:
                 info["voice_info"] = "Default system voice"
         
         return info
@@ -1423,7 +1423,7 @@ class VoiceSystem:
             for file_path in temp_audio_files:
                 try:
                     os.remove(file_path)
-                except:
+                except Exception:
                     pass
             if temp_audio_files:
                 print(f"🗑️ Cleaned up {len(temp_audio_files)} temporary audio files")

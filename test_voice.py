@@ -180,7 +180,7 @@ def test_speech_to_text(voice_system, audio_file=None):
         try:
             os.remove(audio_file)
             print(f"🧹 Cleaned up audio file: {audio_file}")
-        except:
+        except Exception:
             pass
             
         return transcription, confidence
