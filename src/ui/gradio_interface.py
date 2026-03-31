@@ -192,7 +192,10 @@ def create_chatbot_interface():
     }
     """
 
-    with gr.Blocks(css=custom_css, theme=gr.themes.Base(), title="AI GP Doctor") as demo:
+    with gr.Blocks(title="AI GP Doctor") as demo:
+        # Add custom CSS to the demo
+        demo.css = custom_css
+        
         case_state = gr.State({
             "stage": "AWAITING_SYMPTOMS",
             "symptoms": "",
@@ -216,12 +219,9 @@ def create_chatbot_interface():
             chatbot = gr.Chatbot(
                 label="",
                 show_label=False,
-                bubble_full_width=False, 
                 height=600,
                 elem_classes="chat-messages",
                 avatar_images=(None, None),
-                show_copy_button=True,
-                type='messages'
             )
 
             # Input section with voice support
